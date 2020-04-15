@@ -98,6 +98,15 @@ class Problem(metaclass=Singleton):
 
         problem = cls()
 
+        problem._idx = int(data[0])
+        problem._veh_num = int(data[1])
+        problem._veh_capacity = float(data[2])
+        problem._veh_speeds = data[3: 3 + problem._veh_num]
+
+
+
+
+
         problem._instance = int(data[0])
 
         problem._capacity = data[1]
