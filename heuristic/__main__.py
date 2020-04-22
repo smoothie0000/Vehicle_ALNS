@@ -4,6 +4,8 @@ from alns import ALNS
 from numpy.random import default_rng
 
 from .classes import Problem
+from .destroy_operators import D_OPERATORS
+from .repair_operators import R_OPERATORS
 
 
 def main():
@@ -14,13 +16,11 @@ def main():
 
     alns = ALNS(default_rng(problem.instance))
 
-'''
     for op in D_OPERATORS:
         alns.add_destroy_operator(op)
 
     for op in R_OPERATORS:
         alns.add_repair_operator(op)
-'''
 
 
 if __name__ == "__main__":
