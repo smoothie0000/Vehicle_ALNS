@@ -16,19 +16,21 @@ class Route:
     __slots__ = ['customers', 'plan', '_route_cost', '_handling_cost']
 
     customers: SetList[int]  # visited customers
-    plan: List[Stacks]  # loading plan
+    schedule: SetList[float]
+    vehicle_id: int # vehicle ID
 
+    # 0 -> 1 -> 2 -> 0
     _route_cost: Optional[float]  # cached results
-    _handling_cost: Optional[float]
 
     def __init__(self,
                  customers: Union[List[int], SetList[int]],
-                 plan: List[Stacks]):
+                 schedule: Union[List[float], SetList[float]],
+                 vehicle_id: int):
         self.customers = SetList(customers)
-        self.plan = plan
+        self.schedule = SetList(schedule)
+        self.vehicle_id = vehicle_id
 
         self._route_cost = None
-        self._handling_cost = None
 
     def __contains__(self, customer: int) -> bool:
         return customer in self.customers
@@ -44,10 +46,20 @@ class Route:
         Returns the cost (objective) value of this route, based on the
         distance and handling costs.
         """
-        return self.routing_cost() + self.handling_cost()
+        return self.routing_cost()
 
-    @staticmethod
-    def distance(customers: List[int]) -> float:
+    def routing_cost(self) -> float:
+        """
+        Determines the route cost connecting this route's customers, and the
+        DEPOT. O(1).
+        """
+        if self._route_cost is None:
+            route = [DEPOT] + self.customers.to_list() + [DEPOT]
+            self._route_cost = Route.distance(route)
+
+        return self._route_cost
+
+    def distance(self, customers: List[int]) -> float:
         """
         Computes the distance for the passed-in list of visited customer nodes.
         Does not assume this list forms a tour. O(|customers|).
@@ -59,12 +71,22 @@ class Route:
         from_custs, to_custs = tee(customers)
         next(to_custs, None)
 
-        return sum(problem.distances[first + 1, second + 1]
+        return sum(problem.veh_km_cost[self.vehicle_id] * problem.distances[first + 1, second + 1]
                    for first, second in zip(from_custs, to_custs))
 
-    @property
-    def indices(self) -> Dict[int, int]:
-        return {customer: idx for idx, customer in enumerate(self.customers)}
+        '''
+            vehicle capacity can never be exceeded
+            1. delivery is enough for the customers items
+            2. capacity is enough to pickup the items from the customers
+            3. delivery should satisfy the customer demands
+            4. pickup should satisfy the customer demands
+            5. each customer should be visited at least once
+            6. the tour must be consecutive
+            7. each tour should start and end in the depot
+            8. start time and end time for one tour should be within the same shift interval
+            9. arrival time for next customer should be later than the leave time of previous customer
+            10. the start time of next tour should be later than the start time of the previous tour
+        '''
 
     def attempt_append_tail(self, customers: List[int]) -> bool:
         """
@@ -90,35 +112,6 @@ class Route:
 
     def invalidate_routing_cache(self):
         self._route_cost = None
-
-    def invalidate_handling_cache(self):
-        self._handling_cost = None
-
-    def routing_cost(self) -> float:
-        """
-        Determines the route cost connecting this route's customers, and the
-        DEPOT. O(1).
-        """
-        if self._route_cost is None:
-            route = [DEPOT] + self.customers.to_list() + [DEPOT]
-            self._route_cost = Route.distance(route)
-
-        return self._route_cost
-
-    def handling_cost(self) -> float:
-        """
-        Determines the handling cost for this route. O(1), generally.
-        """
-        if self._handling_cost is None:
-            assert len(self.customers) + 1 == len(self.plan)
-
-            self._handling_cost = 0.
-
-            for idx, customer in enumerate(self.customers):
-                before, after = self.plan[idx], self.plan[idx + 1]
-                self._handling_cost += Stacks.cost(customer, before, after)
-
-        return self._handling_cost
 
     def can_insert(self, customer: int, at: int) -> bool:
         """
