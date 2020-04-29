@@ -1,0 +1,63 @@
+ALNS
+  Problem
+  Solution
+    Vehicle
+      Route
+      
+
+1. Solution:
+  1. delivery should satisfy the customer demands
+  2. pickup should satisfy the customer demands
+  3. each customer should be visited at least once
+
+2. Vehicle:
+  1. the tour must be consecutive
+
+3. Route:
+  1. each tour should start and end in the depot
+  2. start time and end time for one tour should be within the same shift interval
+  3. vehicle capacity can never be exceeded
+
+
+customers: 0 - > 1 -> 2 -> 0
+schedule: 80 -> 90 -> 100 -> 110
+load: 200 -> 10 -> 30 -> 40
+
+
+
+
+
+class Solution
+  find_route
+  cost
+
+  class Vehicle
+
+    class Route
+      var customers = [0 , 1, 2, 0]
+      var schedule = [xx, xx, xx, xx]
+      var load = [100, 110, 120, 130, 30]
+      var plan = [[10, 20], [20, 30], [40, 50], [100, 0]]
+
+      def cost(self)
+      def routing_cost(self)
+      def invalidate_routing_cache(self):
+      def distance(customers: List[int])
+
+      __init__(self, customers, schedule, load, plan):
+        - can_insert
+
+      remove_customer(self, customer: int)
+        - remove from customers, plan
+        - update the schedule, load
+          - can_insert
+
+      insert_customer(self, customer: int, at: int, demands)
+        - add to customers, plan
+        - update the schedule, load
+          - can_insert
+
+      can_insert(self, customer: int, at: int)
+        - check the constraint 3.1
+        - check the constraint 3.2
+        - check the constraint 3.3
