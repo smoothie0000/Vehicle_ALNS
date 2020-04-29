@@ -17,6 +17,7 @@ class Route:
 
     customers: SetList[int]  # visited customers
     schedule: SetList[float]
+    load: SetList[int]
     vehicle_id: int # vehicle ID
 
     # 0 -> 1 -> 2 -> 0
@@ -75,110 +76,17 @@ class Route:
                    for first, second in zip(from_custs, to_custs))
 
         '''
-            vehicle capacity can never be exceeded
-            1. delivery is enough for the customers items
-            2. capacity is enough to pickup the items from the customers
-            3. delivery should satisfy the customer demands
-            4. pickup should satisfy the customer demands
-            5. each customer should be visited at least once
-            6. the tour must be consecutive
-            7. each tour should start and end in the depot
-            8. start time and end time for one tour should be within the same shift interval
-            9. arrival time for next customer should be later than the leave time of previous customer
-            10. the start time of next tour should be later than the start time of the previous tour
+          Solution:
+          1. delivery should satisfy the customer demands
+          2. pickup should satisfy the customer demands
+          3. each customer should be visited at least once
+
+          Route:
+          1. the tour must be consecutive
+          2. each tour should start and end in the depot
+          3. start time and end time for one tour should be within the same shift interval
+          4. vehicle capacity can never be exceeded
         '''
-
-    def attempt_append_tail(self, customers: List[int]) -> bool:
-        """
-        This method attempts to append the passed-in customers to this route.
-        It might fail if the capacity constraints cannot be respected (returns
-        False) - if it succeeds, the route is updated with the new customers
-        and True is returned.
-
-        The invariant is thus: if the method succeeds, this route has appended
-        the passed-in customers. If the method fails, the route remains
-        unchanged.
-        """
-        for idx, customer in enumerate(customers):
-            if self.can_insert(customer, len(self)):
-                self.insert_customer(customer, len(self))
-            else:
-                for customer in customers[:idx]:
-                    self.remove_customer(customer)
-
-                return False
-
-        return True
-
-    def invalidate_routing_cache(self):
-        self._route_cost = None
-
-    def can_insert(self, customer: int, at: int) -> bool:
-        """
-        Checks if inserting a customer into this route at the given index at is
-        feasible, that is, there is sufficient stack capacity to store the
-        delivery and pickup items for the appropriate legs of the tour.
-
-        O(n), where n is the number of customers in the route.
-        """
-        problem = Problem()
-
-        # We insert the customer's delivery item into the shortest stack at the
-        # depot. Including at: we need to make sure the delivery item  fits into
-        # stacks up to and including the customer before at, and the depot.
-        can_deliver = self.can_insert_item(problem.demands[customer],
-                                           self.plan[0].shortest_stack().index,
-                                           at + 1)
-
-        if not can_deliver:
-            # This is already infeasible, and cutting it off here saves another
-            # computation below.
-            return False
-
-        # Similarly, we insert the customer pick-up item into the shortest stack
-        # at the customer. From at, since we copy at and turn it into the
-        # customer's loading plan (which should be feasible).
-        can_pickup = self.can_insert_item(problem.pickups[customer],
-                                          self.plan[at].shortest_stack().index,
-                                          at)
-
-        return can_deliver and can_pickup
-
-    def can_insert_item(self,
-                        item: Item,
-                        stack_idx: int,
-                        customer_at: Optional[int] = None) -> bool:
-        """
-        Tests if the given item can be inserted into the stack indicated by
-        stack_idx for all appropriate legs of the tour, up to customer_at (for
-        a delivery item), or from customer_at (for a pickup item).
-
-        If customer_at is not passed, it is assumed the customer is in this
-        route.
-        """
-        if customer_at is None:
-            customer_at = self.customers.index(item.customer)
-
-        problem = Problem()
-
-        if item.is_delivery():
-            plans = self.plan[:customer_at]
-        else:
-            plans = self.plan[customer_at:]
-
-        return all(plan[stack_idx].volume() + item.volume
-                   <= problem.stack_capacity for plan in plans)
-
-    def opt_insert(self, customer: int) -> Tuple[int, float]:
-        """
-        Optimal feasible location and cost to insert customer into this route.
-        Assumes it is feasible to do so.
-        """
-        costs = [self._insert_cost(customer, at)
-                 for at in range(len(self.customers) + 1)]
-
-        # noinspection PyTypeChecker
-        return min(enumerate(costs), key=operator.itemgetter(1))
 
     def insert_customer(self, customer: int, at: int):
         """
@@ -231,7 +139,6 @@ class Route:
                 plan[stack.index].push_rear(pickup)
 
         self._update_routing_cost(customer, at, "insert")
-        self.invalidate_handling_cache()
 
     def remove_customer(self, customer: int):
         """
@@ -247,7 +154,6 @@ class Route:
         idx = self.customers.index(customer)
 
         self._update_routing_cost(customer, idx, "remove")
-        self.invalidate_handling_cache()
 
         for stacks in self.plan[:idx + 1]:
             stacks.find_stack(delivery).remove(delivery)
@@ -257,62 +163,6 @@ class Route:
 
         del self.customers[idx]
         del self.plan[idx + 1]
-
-    def _insert_cost(self, customer: int, at: int) -> float:
-        """
-        Computes the routing cost of inserting customer in route at position
-        at.
-
-        Note: NW attempted this with relative improvements of 1 -> 2 -> 3
-        minus 1 -> 3 (if we're inserting 2), but that did not improve costs.
-        Perhaps that's too restrictive?
-        """
-        problem = Problem()
-
-        if at == 0:
-            return problem.short_distances[DEPOT, customer, self.customers[0]]
-
-        if at == len(self.customers):
-            return problem.short_distances[self.customers[-1], customer, DEPOT]
-
-        return problem.short_distances[self.customers[at - 1],
-                                       customer,
-                                       self.customers[at]]
-
-    def _update_routing_cost(self, customer: int, idx: int, update_type):
-        """
-        Updates the routing cost for this Route, which is a cached property.
-        For removals, it removes the cost of [from] -> [cust] -> [next], and
-        adds the cost of [from] -> [next]. For insertions, it does the opposite.
-        Called only when the customer is at or still at this index (so after
-        insertion, and before removal).
-
-        Raises
-        ------
-        ValueError
-            When the update type is not understood.
-        """
-        if self._route_cost is None:  # computation can be delayed.
-            return
-
-        prev_leg = DEPOT if idx == 0 else self.customers[idx - 1]
-        next_leg = DEPOT if idx == len(self.customers) - 1 \
-            else self.customers[idx + 1]
-
-        problem = Problem()
-
-        if update_type == "remove":
-            self._route_cost -= problem.short_distances[prev_leg,
-                                                        customer,
-                                                        next_leg]
-            self._route_cost += problem.distances[prev_leg + 1, next_leg + 1]
-        elif update_type == "insert":
-            self._route_cost += problem.short_distances[prev_leg,
-                                                        customer,
-                                                        next_leg]
-            self._route_cost -= problem.distances[prev_leg + 1, next_leg + 1]
-        else:
-            raise ValueError(f"Update type `{update_type}' is not understood.")
 
     def __str__(self):
         customers = np.array([DEPOT] + self.customers.to_list() + [DEPOT])
