@@ -6,41 +6,33 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 
 from heuristic.constants import DEPOT
-from .Item import Item
 from .Problem import Problem
-from .SetList import SetList
-from .Stacks import Stacks
 
 
 class Route:
     __slots__ = ['customers', 'plan', '_route_cost', '_handling_cost']
 
-    customers: SetList[int]  # visited customers
-    schedule: SetList[float]
-    load: SetList[int]
+    customers: List[int]  # visited customers
+    schedule: List[float]
+    load: List[int]
+    plan: List[list]
     vehicle_id: int # vehicle ID
 
     # 0 -> 1 -> 2 -> 0
     _route_cost: Optional[float]  # cached results
 
-    def __init__(self,
-                 customers: Union[List[int], SetList[int]],
-                 schedule: Union[List[float], SetList[float]],
-                 vehicle_id: int):
-        self.customers = SetList(customers)
-        self.schedule = SetList(schedule)
+    def __init__(self, customers: List[int], schedule: List[float],
+                 load: List[int], plan: List[list], vehicle_id: int):
+        self.customers = customers
+        self.schedule = schedule
+        self.load = load
+        self.plan = plan
         self.vehicle_id = vehicle_id
 
         self._route_cost = None
 
-    def __contains__(self, customer: int) -> bool:
-        return customer in self.customers
-
-    def __len__(self):
-        return len(self.customers)
-
-    def __iter__(self):
-        yield from self.customers
+        if not self.can_insert():
+            raise Exception('Invalid solution for the route.')
 
     def cost(self) -> float:
         """
@@ -54,10 +46,14 @@ class Route:
         Determines the route cost connecting this route's customers, and the
         DEPOT. O(1).
         """
-        if self._route_cost is None:
-            route = [DEPOT] + self.customers.to_list() + [DEPOT]
-            self._route_cost = Route.distance(route)
+        _distance = 0
+        problem = Problem()
 
+        if self._route_cost is None:
+            route = self.customers
+            _distance = Route.distance(route)
+
+        self._route_cost = problem.veh_km_cost[self.vehicle_id] * _distance
         return self._route_cost
 
     def distance(self, customers: List[int]) -> float:
@@ -72,103 +68,135 @@ class Route:
         from_custs, to_custs = tee(customers)
         next(to_custs, None)
 
-        return sum(problem.veh_km_cost[self.vehicle_id] * problem.distances[first + 1, second + 1]
+        return sum(problem.distances[first + 1, second + 1]
                    for first, second in zip(from_custs, to_custs))
 
-        '''
-          Solution:
-          1. delivery should satisfy the customer demands
-          2. pickup should satisfy the customer demands
-          3. each customer should be visited at least once
+    def insert_customer(self, customer: int, at: int, plan: list):
+        ##########self.customers.insert(at, customer)
+        ##########self.plan.insert(at, plan)
 
-          Route:
-          1. the tour must be consecutive
-          2. each tour should start and end in the depot
-          3. start time and end time for one tour should be within the same shift interval
-          4. vehicle capacity can never be exceeded
-        '''
+        self._update_schedule()
+        self._update_load()
 
-    def insert_customer(self, customer: int, at: int):
-        """
-        Inserts customer in route at index at. Inserts customer delivery and
-        pickup items into the appropriate parts of the loading plan. Assumes it
-        is feasible to do so.
-        """
+        return self.can_insert()
+
+    def remove_customer(self, customer: int, at: int):
+        #########self.customers.insert(at, customer)
+        #########self.plan.insert(at, plan)
+
+        self._update_schedule()
+        self._update_load()
+
+        return self.can_insert()
+
+    def _update_schedule(self):
         problem = Problem()
 
-        self.customers.insert(at, customer)
-        self.plan.insert(at + 1, deepcopy(self.plan[at]))
+        self.schedule = [self.schedule[0]]
 
-        # Inserts customer delivery item into the loading plan. The stack to
-        # insert into is the shortest stack at the depot (since the delivery
-        # item is carried from the depot to the customer).
-        stack_idx = self.plan[0].shortest_stack().index
-        delivery = problem.demands[customer]
+        for index in range(len(self.customers)):
+            customer = self.customers[index]
 
-        for plan in self.plan[:at + 1]:
-            plan[stack_idx].push_rear(delivery)
+            loads_to_handle = self.plan[customer][0] + self.plan[customer][1]
+            service_time = problem.SERVICE_TIME * loads_to_handle
 
-        pickup = problem.pickups[customer]
-        stack = self.plan[at + 1].shortest_stack()
+            arrival_time = self.schedule[customer]
+            leave_time = arrival_time + service_time
 
-        # Pickups in the front (these are never moved, so we might want to
-        # insert our pick-up item just after them, nearer to the rear).
-        front = list(takewhile(lambda item: item.is_pickup(), reversed(stack)))
+            # calculate next arrival time
+            if index < len(self.customers) - 1:
+                next_customer = self.customers[index + 1]
+                distance = problem.distances[customer, next_customer]
+                vehicle_speed = problem.VEH_SPEED[self.vehicle_id]
+                drive_time = distance / vehicle_speed
+                next_arrival_time = leave_time + drive_time
+                next_open_time = problem.CUST_OPEN_TIME[next_customer]
 
-        # The pickup item will have to be moved for each delivery item that's
-        # currently in the stack, if we insert it in the rear.
-        volume = stack.deliveries_in_stack() * pickup.volume
+                if next_arrival_time < next_open_time:
+                    next_arrival_time = next_open_time
+                self.schedule.append(next_arrival_time)
 
-        # Tests if placing the pick-up item near the front is cheaper than
-        # inserting it in the rear. The former incurs costs *now*, whereas for
-        # the latter the item might have to move at later points in the tour.
-        if stack.volume() - sum(item.volume for item in front) < volume:
-            # It is also best to move any pickup items that are not already
-            # near the front, as those are to be moved now anyway.
-            pickups = [item for item in islice(stack, len(stack) - len(front))
-                       if item.is_pickup()]
+    def _update_load(self):
+        self.load = [self.load[0]]
+        for index in range(len(self.plan)):
+            plan = self.plan[index]
+            delivery = plan[0]
+            pickup = plan[1]
 
-            for plan in self.plan[at + 1:]:
-                for item in pickups:
-                    plan[stack.index].remove(item)
-                    plan[stack.index].push(-len(front), item)
+            new_load = self.load[index] - delivery + pickup
+            self.load.append(new_load)
 
-                plan[stack.index].push(-len(front), pickup)
-        else:
-            for plan in self.plan[at + 1:]:
-                plan[stack.index].push_rear(pickup)
+    def can_insert(self):
+        result = True
+        result = result and self._validate_customers()
+        result = result and self._validate_schedule()
+        result = result and self._validate_load()
+        result = result and self._validate_plan()
+        return result
 
-        self._update_routing_cost(customer, at, "insert")
+    def _validate_customers(self):
+        if self.customers[0] == DEPOT and self.customers[-1] == DEPOT:
+            return True
+        return False
 
-    def remove_customer(self, customer: int):
-        """
-        Removes the passed-in customer from this route, and updates the
-        loading plan to reflect this change. O(n * m), where n is the tour
-        length, and m the length of the longest stack (in number of items).
-        """
+    def _validate_schedule(self):
         problem = Problem()
 
-        delivery = problem.demands[customer]
-        pickup = problem.pickups[customer]
+        result = True
+        for index in range(len(self.customers)):
+            customer = self.customers[index]
 
-        idx = self.customers.index(customer)
+            arrival_time = self.schedule[customer]
+            loads_to_handle = self.plan[customer][0] + self.plan[customer][1]
+            service_time = problem.SERVICE_TIME * loads_to_handle
+            leave_time = arrival_time + service_time
 
-        self._update_routing_cost(customer, idx, "remove")
+            open_time = problem.CUST_OPEN_TIME[customer]
+            close_time = problem.CUST_CLOSE_TIME[customer]
 
-        for stacks in self.plan[:idx + 1]:
-            stacks.find_stack(delivery).remove(delivery)
+            if open_time > arrival_time or close_time < leave_time:
+                result = False
+                break
 
-        for stacks in self.plan[idx + 1:]:
-            stacks.find_stack(pickup).remove(pickup)
+            # validate next arrival time
+            if index < len(self.customers) - 1:
+                next_customer = self.customers[index + 1]
+                distance = problem.distances[customer, next_customer]
+                vehicle_speed = problem.VEH_SPEED[self.vehicle_id]
+                drive_time = distance / vehicle_speed
+                next_arrival_time = leave_time + drive_time
+                next_customer_arrival_time = self.schedule[index + 1]
 
-        del self.customers[idx]
-        del self.plan[idx + 1]
+                if leave_time + drive_time > next_customer_arrival_time:
+                    result = False
+                    break
 
-    def __str__(self):
-        customers = np.array([DEPOT] + self.customers.to_list() + [DEPOT])
-        customers += 1
+        return result
 
-        return f"{customers}, {self.plan}"
+    def _validate_load(self):
+        result = True
 
-    def __repr__(self):
-        return f"Route({self})"
+        for index in range(len(self.plan)):
+            plan = self.plan[index]
+            delivery = plan[0]
+            pickup = plan[1]
+
+            if self.load[index] - delivery + pickup != self.load[index + 1]:
+                result = False
+                break
+
+        return result
+
+    def _validate_plan(self):
+        problem = Problem()
+
+        delivery_demand = problem.CUST_DELIVERY_DEMAND
+        pickup_demand = problem.CUST_PICKUP_DEMAND
+
+        result = True
+        for plan in self.plan:
+            if plan[0] > delivery_demand or plan[1] > pickup_demand:
+                result = False
+                break
+
+        return result

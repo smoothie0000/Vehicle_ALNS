@@ -17,6 +17,7 @@ ALNS
   1. each tour should start and end in the depot
   2. start time and end time for one tour should be within the same shift interval
   3. vehicle capacity can never be exceeded
+  4. delivery and pickup time should be within the customer's open time
 
 
 customers: 0 - > 1 -> 2 -> 0
