@@ -139,9 +139,17 @@ class Route:
         return result
 
     def _validate_customers(self):
-        if self.customers[0] == DEPOT and self.customers[-1] == DEPOT:
-            return True
-        return False
+        result = True
+        if self.customers[0] != DEPOT or self.customers[-1] != DEPOT:
+            result = False
+
+        try:
+            index = self.customers[1, -1].index(DEPOT)
+        except ValueError:
+            return result
+
+        result = False
+        return result
 
     def _validate_schedule(self):
         problem = Problem()
