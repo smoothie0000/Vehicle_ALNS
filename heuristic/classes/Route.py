@@ -72,22 +72,26 @@ class Route:
                    for first, second in zip(from_custs, to_custs))
 
     def insert_customer(self, customer: int, at: int, plan: list):
-        ##########self.customers.insert(at, customer)
-        ##########self.plan.insert(at, plan)
+        self.customers.insert(at, customer)
+        self.plan.insert(at, plan)
 
         self._update_schedule()
         self._update_load()
 
         return self.can_insert()
 
-    def remove_customer(self, customer: int, at: int):
-        #########self.customers.insert(at, customer)
-        #########self.plan.insert(at, plan)
+    def remove_customer(self, customer: int):
+        try:
+            index = self.customers.index(customer)
+            while True:
+                del self.customers[index]
+                del self.plan[index]
+                index = self.customers.index(customer)
+        except ValueError:
+            self._update_schedule()
+            self._update_load()
 
-        self._update_schedule()
-        self._update_load()
-
-        return self.can_insert()
+            return self.can_insert()
 
     def _update_schedule(self):
         problem = Problem()
